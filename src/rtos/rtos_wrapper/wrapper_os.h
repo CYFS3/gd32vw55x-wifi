@@ -79,6 +79,7 @@ extern "C" {
 
 typedef void *os_sema_t;
 typedef void *os_mutex_t;
+typedef os_mutex_t _mutex;  // 为ROM符号表兼容性添加别名
 typedef void *os_task_t;
 typedef void *os_timer_t;
 typedef void *os_queue_t;
@@ -435,7 +436,7 @@ int sys_sema_get_count(os_sema_t *sema);
       \arg        OS_ERROR: return error
       \arg        OS_OK: run success
 */
-#ifndef RT_USING_LWIP
+
 int sys_mutex_init(os_mutex_t *mutex);
 
 /*!
@@ -477,7 +478,6 @@ int32_t sys_mutex_get(os_mutex_t *mutex);
     \retval     none
 */
 void sys_mutex_put(os_mutex_t *mutex);
-#endif /* RT_USING_LWIP */
 
 /*!
     \brief      create and initialize a message queue

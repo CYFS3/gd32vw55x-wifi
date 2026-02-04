@@ -792,10 +792,8 @@ SM_STATE(MAINTAIN_CONNECTION, DHCP)
     SM_ENTRY(MAINTAIN_CONNECTION, DHCP);
     wvif->sta.state = WIFI_STA_STATE_IP_GETTING;
 
-    if (!net_if) {
-        printf("Error: net_if is NULL in DHCP state\r\n");
+    if (!net_if)
         return;
-    }
 
     if (!net_if_is_static_ip()) {
         if (net_dhcp_address_obtained(net_if)) {

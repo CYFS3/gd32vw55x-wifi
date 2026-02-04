@@ -11,16 +11,11 @@ LOCAL_CCFLAGS = ''
 LIBS = []
 LIBPATH = []
 
-# 获取标准外设库路径（使用已存在的 gd32-riscv-series-latest 包中的）
-bsp_packages_dir = os.path.dirname(cwd)
-gd32_peripheral_path = os.path.join(bsp_packages_dir, 'gd32-riscv-series-latest', 'GD32VW55x', 'GD32VW55x_standard_peripheral')
-
 # 获取RT-Thread根目录路径
 bsp_dir = os.path.normpath(os.path.join(cwd, '..', '..'))
-rtthread_root = os.path.normpath(os.path.join(bsp_dir, '..', '..', '..', '..'))
-
-# 获取GD32 SDK路径（用于mbedtls等库）
-gd32_sdk_root = os.path.normpath(os.path.join(rtthread_root, '..', 'GD32VW55x_RELEASE_V1.0.3f'))
+rtthread_root = os.path.normpath(os.path.join(bsp_dir,'rt-thread'))
+if not os.path.exists(rtthread_root):
+    rtthread_root = os.path.normpath(os.path.join(bsp_dir, '..', '..', '..','..'))
 
 # 优先添加本地 mbedtls 3.x 头文件路径（必须在 ROM mbedtls 2.17 之前）
 # 这样可以确保编译时使用 mbedtls 3.x 的头文件而不是 ROM 中的 2.17 版本
@@ -34,7 +29,6 @@ if os.path.exists(mbedtls_local_path):
 # 公共头文件路径
 CPPPATH += [
     cwd + '/inc',
-    cwd + '/port',
     cwd + '/src/macsw/export',
     cwd + '/src/macsw/import',
     cwd + '/src/wifi_manager',
@@ -59,18 +53,6 @@ CPPPATH += [
 # 如果存在本地 mbedtls，这个路径会被忽略（因为符号已经被本地版本提供）
 if not os.path.exists(mbedtls_local_path):
     CPPPATH += [cwd + '/rom_export/mbedtls-2.17.0-rom/include']
-    # 回退到 GD32 SDK 的 mbedtls 路径
-    mbedtls_path = os.path.join(gd32_sdk_root, 'MSDK', 'mbedtls', 'mbedtls-2.17.0-ssl', 'include')
-    if os.path.exists(mbedtls_path):
-        CPPPATH += [mbedtls_path]
-
-# 注意：不要添加标准外设库的 gd32vw55x.h，因为 WiFi SDK 有自己的版本
-# WiFi SDK 的 gd32vw55x.h 已经包含了标准外设库（见 line 316: #include "gd32vw55x_libopt.h"）
-# 添加标准外设库路径会导致头文件冲突和重复定义错误
-# if os.path.exists(gd32_peripheral_path):
-#     CPPPATH += [
-#         gd32_peripheral_path + '/Include',
-#     ]
 
 if GetDepend(['PKG_USING_GD32VW55X_WIFI']):
 
@@ -146,41 +128,43 @@ if GetDepend(['PKG_USING_GD32VW55X_WIFI']):
             'MBEDTLS_TEST_SW_INET_PTON',
         ]
 
-    # RT-Thread 移植层
-    if os.path.exists(cwd + '/port'):
-        src += Glob('port/*.c')
-        CPPPATH += [cwd + '/port']
+    # 强制启用 lwip netif 回调（GD32 WiFi 需要）
+    CPPDEFINES += [
+        'LWIP_NETIF_STATUS_CALLBACK=1',
+        'LWIP_NETIF_LINK_CALLBACK=1',
+    ]
 
-    # LwIP 2.2.0（使用 GD32 SDK 自带的 lwip-2.2.0，而不是 RT-Thread 的 lwip）
-    lwip_path = cwd + '/src/lwip-2.2.0'
-    if os.path.exists(lwip_path):
-        # LwIP 核心层
-        src += Glob('src/lwip-2.2.0/src/core/*.c')
-        src += Glob('src/lwip-2.2.0/src/core/ipv4/*.c')
-
-        # LwIP API 层
-        src += Glob('src/lwip-2.2.0/src/api/*.c')
-
-        # LwIP 网络接口层
-        src += Glob('src/lwip-2.2.0/src/netif/*.c')
-
-        # LwIP 端口适配层（GD32 SDK 提供）
+    if GetDepend(['RT_USING_NETDEV']):
         src += [
-            'src/lwip-2.2.0/port/dhcpd.c',
-            'src/lwip-2.2.0/port/sys_arch.c',
-            'src/lwip-2.2.0/port/wifi_netif.c',
+            'port/wifi_netif_port.c'
+        ]
+    
+    lwip_path = cwd + '/src/lwip/port'
+    if os.path.exists(lwip_path):
+
+        src += [
+            'src/lwip/port/dhcpd.c',
+            'src/lwip/port/sys_arch.c',
+            'src/lwip/port/wifi_netif.c',
+            'src/lwip/port/dnsd.c',
         ]
 
         # LwIP 头文件路径（优先级最高，覆盖 RT-Thread 的 lwip）
         CPPPATH = [
-            cwd + '/src/lwip-2.2.0/src/include',
-            cwd + '/src/lwip-2.2.0/src/include/lwip',
-            cwd + '/src/lwip-2.2.0/port',
-            cwd + '/src/lwip-2.2.0/port/arch',
-        ] + CPPPATH  # 将 lwip-2.2.0 路径插入到最前面
+            cwd + '/src/lwip/port',
+            cwd + '/src/lwip/port/arch',
+        ] + CPPPATH
 
         # LwIP 相关宏定义
-        CPPDEFINES += ['LWIP_TIMEVAL_PRIVATE=0']  # 避免与系统 timeval 冲突
+        CPPDEFINES += [
+            'LWIP_TIMEVAL_PRIVATE=0',  # 避免与系统 timeval 冲突
+        ]
+
+        # 添加 lwip mem.c 编译（RT-Thread 的 lwip SConscript 没有包含它）
+        # GD32 的 lwipopts.h 定义了 MEM_LIBC_MALLOC=1，但仍需要 mem_init 等函数
+        lwip_mem_c = os.path.join(rtthread_root,'components', 'net', 'lwip', 'lwip-2.1.2', 'src', 'core', 'mem.c')
+        if os.path.exists(lwip_mem_c):
+            src += [lwip_mem_c]
 
     # 预编译库配置
     lib_path = cwd + '/lib'

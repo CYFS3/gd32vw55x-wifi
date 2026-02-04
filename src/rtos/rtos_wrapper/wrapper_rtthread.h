@@ -94,7 +94,7 @@ typedef struct task_wrapper {
 
 typedef struct task_status
 {
-    rt_thread_t *thread_ptr;
+    rt_thread_t thread_ptr;
     char *name;                         /* Pointer to thread's name */
     rt_uint8_t state;                   /* Thread's execution state */
     rt_uint32_t priority;               /* Priority of thread (0-1023) */
