@@ -37,9 +37,15 @@ OF SUCH DAMAGE.
 #include <stdlib.h>
 #include <stdbool.h>
 
+// 定义内核源码标志，以访问调度器内部API
+#define __RT_KERNEL_SOURCE__
+
 #include "wrapper_rtthread.h"
 #include "board.h"
 #include "boot.h"
+#include <rtsched.h>
+
+#include "rtos_import.h"
 
 #include "systime.h"
 #include "dlist.h"
@@ -162,7 +168,7 @@ void sys_mfree(void *ptr)
 */
 int32_t sys_free_heap_size(void)
 {
-    rt_uint32_t total, used, total_added = 0, used_added = 0;
+    rt_size_t total, used, total_added = 0, used_added = 0;
     dlist_t *pos, *n;
     add_heap_wrapper_t *heap;
 #ifdef RT_USING_HEAP
@@ -195,8 +201,8 @@ int32_t sys_free_heap_size(void)
 */
 int32_t sys_min_free_heap_size(void)
 {
-    rt_uint32_t total = 0, max_used = 0;
-    rt_uint32_t total_added = 0, max_used_added = 0;
+    rt_size_t total = 0, max_used = 0;
+    rt_size_t total_added = 0, max_used_added = 0;
     dlist_t *pos, *n;
     add_heap_wrapper_t *heap;
 
@@ -253,8 +259,8 @@ uint16_t sys_heap_block_size(void)
 */
 void sys_heap_info(int *total_size, int *free_size, int *min_free_size)
 {
-    rt_uint32_t max_used = 0, used_size;
-    rt_uint32_t max_used_added = 0, total_added = 0, used_added = 0;
+    rt_size_t max_used = 0, used_size;
+    rt_size_t max_used_added = 0, total_added = 0, used_added = 0;
     dlist_t *pos, *n;
     add_heap_wrapper_t *heap;
 
@@ -460,10 +466,10 @@ char* sys_task_name_get(void *task)
     rt_thread_t thread = (rt_thread_t)task;
 
     if (task == NULL) {
-        return &(rt_thread_self()->parent.name);
+        return (rt_thread_self()->parent.name);
     }
 
-    return &thread->parent.name;
+    return (thread->parent.name);
 }
 
 /*!
@@ -538,7 +544,7 @@ int32_t sys_task_wait(uint32_t timeout_ms, void *msg_ptr)
         return OS_ERROR;
     }
 
-    result = sys_queue_fetch(&task_wrapper->task_queue, msg_ptr, timeout_ms, 1);
+    result = sys_queue_fetch((os_queue_t*)&task_wrapper->task_queue, msg_ptr, timeout_ms, 1);
     if (result != 0) {
         return OS_TIMEOUT;
     }
@@ -575,13 +581,7 @@ int32_t sys_task_post(void *receiver_task, void *msg_ptr, uint8_t from_isr)
 
     task_wrapper = (task_wrapper_t *)task_handle->user_data;
     if (task_wrapper == NULL) {
-        // Silently ignore for system threads
         const char *thread_name = task_handle->parent.name;
-        if (strncmp(thread_name, "tidle", 5) == 0 ||
-            strncmp(thread_name, "tshell", 6) == 0 ||
-            strncmp(thread_name, "timer", 5) == 0) {
-            return OS_OK;  // Ignore system threads
-        }
         dbg_print(ERR, "sys_task_post, task wrapper is NULL, thread: %s\r\n", thread_name);
         return OS_ERROR;
     }
@@ -591,7 +591,7 @@ int32_t sys_task_post(void *receiver_task, void *msg_ptr, uint8_t from_isr)
         return OS_ERROR;
     }
 
-    ret = sys_queue_post(&task_wrapper->task_queue, msg_ptr);
+    ret = sys_queue_post((os_queue_t*)&task_wrapper->task_queue, msg_ptr);
     if (ret != OS_OK) {
         dbg_print(ERR, "sys_task_post failed, ret=%d, thread: %s\r\n",
                   ret, task_handle->parent.name);
@@ -686,29 +686,13 @@ int sys_task_wait_notification(int timeout)
         return OS_ERROR;
     }
 
-    // RT-Thread system threads (idle, shell, timer) don't have task_wrapper
-    // because they're not created via sys_task_create.
-    // WiFi precompiled library may call this function from these contexts.
-    // Check thread name first to handle these cases gracefully.
-    const char *thread_name = task_handle->parent.name;
-    if (strncmp(thread_name, "tidle", 5) == 0 ||
-        strncmp(thread_name, "tshell", 6) == 0 ||
-        strncmp(thread_name, "timer", 5) == 0) {
-        // System threads: return 0 (timeout) to simulate normal behavior
-        return 0;
-    }
-
     task_wrapper = (task_wrapper_t *)task_handle->user_data;
     if (task_wrapper == NULL || task_wrapper->notification_sem == NULL) {
-        // For other threads, this is a real error - log once to avoid spam
-        static rt_bool_t error_logged = RT_FALSE;
-        if (!error_logged) {
-            dbg_print(ERR, "sys_task_wait_notification, task wrapper or notification is NULL, thread: %s, user_data: 0x%08x\r\n",
-                      thread_name, task_handle->user_data);
-            error_logged = RT_TRUE;
-        }
+        dbg_print(ERR, "sys_task_wait_notification, task wrapper or notification is NULL\r\n");
         return OS_ERROR;
     }
+	
+	const char *thread_name = task_handle->parent.name;
 
     result = rt_sem_take(task_wrapper->notification_sem, sys_timeout_2_tickcount(timeout));
     if (result == RT_EOK) {
@@ -743,14 +727,7 @@ void sys_task_notify(void *task, bool isr)
 
     task_wrapper = (task_wrapper_t *)task_handle->user_data;
     if (task_wrapper == NULL || task_wrapper->notification_sem == NULL) {
-        // System threads don't have notification semaphore - this is OK, just return
         const char *thread_name = task_handle->parent.name;
-        if (strncmp(thread_name, "tidle", 5) == 0 ||
-            strncmp(thread_name, "tshell", 6) == 0 ||
-            strncmp(thread_name, "timer", 5) == 0) {
-            return;  // Silently ignore for system threads
-        }
-
         dbg_print(ERR, "sys_task_notify, task wrapper or notification is NULL for thread: %s\r\n",
                   thread_name);
         return;
@@ -814,7 +791,7 @@ static rt_uint32_t _rtt_task_id_get(rt_thread_t thread)
 
 static rt_uint32_t _rtt_task_stack_base_get(rt_thread_t thread)
 {
-    return thread->stack_addr;
+    return (rt_uint32_t)thread->stack_addr;
 }
 
 static rt_uint32_t _rtt_task_stack_free_get(rt_thread_t thread)
@@ -962,7 +939,7 @@ int32_t sys_sema_init_ext(os_sema_t *sema, int max_count, int init_count)
 
     if (rt_sem_control(*sema, RT_IPC_CMD_SET_VLIMIT, (void *)max_count) != RT_EOK) {
         dbg_print(ERR, "sys_sema_init_ext, max_count set failed\r\n");
-        rt_sem_delete(sema);
+        rt_sem_delete(*sema);
         return OS_ERROR;
     }
 
@@ -1104,7 +1081,25 @@ int sys_sema_get_count(os_sema_t *sema)
     return count;
 }
 
-#ifndef RT_USING_LWIP
+#ifdef sys_mutex_new
+#undef sys_mutex_new
+#endif
+#ifdef sys_mutex_lock
+#undef sys_mutex_lock
+#endif
+#ifdef sys_mutex_unlock
+#undef sys_mutex_unlock
+#endif
+#ifdef sys_mutex_free
+#undef sys_mutex_free
+#endif
+#ifdef sys_mutex_valid
+#undef sys_mutex_valid
+#endif
+#ifdef sys_mutex_set_invalid
+#undef sys_mutex_set_invalid
+#endif
+
 /*!
     \brief      create and initialize a mutex
     \param[in]  mutex: pointer to the mutext handle
@@ -1113,7 +1108,7 @@ int sys_sema_get_count(os_sema_t *sema)
       \arg        OS_ERROR: return error
       \arg        OS_OK: run success
 */
-int sys_mutex_init(os_mutex_t *mutex)
+int sys_mutex_init(_mutex *mutex)
 {
     *mutex = rt_mutex_create("", RT_IPC_FLAG_FIFO);
 
@@ -1127,7 +1122,7 @@ int sys_mutex_init(os_mutex_t *mutex)
     \param[out] none
     \retval     none
 */
-void sys_mutex_free(os_mutex_t *mutex)
+void sys_mutex_free(_mutex *mutex)
 {
     if (*mutex == NULL) {
         dbg_print(ERR, "sys_mutex_free, mutex = NULL\r\n");
@@ -1146,7 +1141,7 @@ void sys_mutex_free(os_mutex_t *mutex)
       \arg        OS_ERROR: return error
       \arg        OS_OK: run success
 */
-int32_t sys_mutex_get(os_mutex_t *mutex)
+int32_t sys_mutex_get(_mutex *mutex)
 {
     if (*mutex == NULL) {
         dbg_print(ERR, "sys_mutex_get, mutex = NULL\r\n");
@@ -1169,7 +1164,7 @@ int32_t sys_mutex_get(os_mutex_t *mutex)
       \arg        OS_ERROR: return error
       \arg        OS_OK: run success
 */
-int32_t sys_mutex_try_get(os_mutex_t *mutex, int timeout)
+int32_t sys_mutex_try_get(_mutex *mutex, int timeout)
 {
     if (*mutex == NULL) {
         dbg_print(ERR, "sys_mutex_try_get, mutex = NULL\r\n");
@@ -1192,7 +1187,7 @@ int32_t sys_mutex_try_get(os_mutex_t *mutex, int timeout)
     \param[out] none
     \retval     none
 */
-void sys_mutex_put(os_mutex_t *mutex)
+void sys_mutex_put(_mutex *mutex)
 {
     if (*mutex == NULL) {
         dbg_print(ERR, "sys_mutex_put, mutex = NULL\r\n");
@@ -1202,7 +1197,6 @@ void sys_mutex_put(os_mutex_t *mutex)
     if (rt_mutex_release(*mutex) != RT_EOK)
         dbg_print(ERR, "sys_mutex_put, give mutex error\r\n");
 }
-#endif /* RT_USING_LWIP */
 
 /*!
     \brief      create and initialize a message queue
@@ -1814,7 +1808,7 @@ void sys_add_heap_region(uint32_t ucStartAddress, uint32_t xSizeInBytes)
     if (heap) {
         INIT_DLIST_HEAD(&heap->list);
         co_snprintf(heap->name, ADD_HEAP_NAME_LEN, "heap_%08x:", ucStartAddress);
-        if (rt_memheap_init(&heap->_heap_added, heap->name, ucStartAddress, xSizeInBytes) == RT_EOK) {
+        if (rt_memheap_init(&heap->_heap_added, heap->name, (void *)ucStartAddress, xSizeInBytes) == RT_EOK) {
             sys_enter_critical();
             list_add_tail(&heap->list, &added_heaps);
             sys_exit_critical();
@@ -1862,7 +1856,9 @@ void sys_remove_heap_region(uint32_t ucStartAddress, uint32_t xSizeInBytes)
 void dump_mem_block_list(void)
 {
 #ifdef RT_USING_HEAP
-    rt_memheap_dump();
+    // rt_memheap_dump() 在 RT-Thread 5.3.0 中不存在，使用替代方案
+    // rt_memheap_dump();
+    rt_kprintf("Memory heap dump not available in this RT-Thread version\n");
 #endif /* RT_USING_HEAP */
 }
 
@@ -1918,7 +1914,7 @@ void sys_priority_set(void *task, os_prio_t priority)
 */
 os_prio_t sys_priority_get(void *task)
 {
-    return rt_sched_thread_get_curr_prio((os_task_t *)&task);
+    return rt_sched_thread_get_curr_prio((rt_thread_t)task);
 }
 
 /* FreeRTOS compatibility layer - critical section tracking */

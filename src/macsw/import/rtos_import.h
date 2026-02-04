@@ -101,13 +101,10 @@ extern void sys_sema_up(_sema *sema);
 extern void sys_sema_up_from_isr(_sema *sema);
 extern int32_t sys_sema_down(_sema *sema, uint32_t timeout_ms);
 
-/* Mutex functions - only declare if LwIP is not enabled (RT-Thread uses LwIP's sys_mutex_*) */
-#ifndef RT_USING_LWIP
 extern int sys_mutex_init(_mutex *mutex);
 extern void sys_mutex_free(_mutex *mutex);
 extern int32_t sys_mutex_get(_mutex *mutex);
 extern void sys_mutex_put(_mutex *mutex);
-#endif
 
 extern uint32_t sys_os_now(bool isr);
 extern void sys_ms_sleep(int ms);
