@@ -1378,6 +1378,7 @@ SM_STEP(MAINTAIN_SOFTAP)
         case WIFI_MGMT_EVENT_CLIENT_ADDED:
             // add user callback here
             wifi_sm_printf(WIFI_SM_NOTICE, STATE_MACHINE_DEBUG_PREFIX ": Add client "MAC_FMT"\r\n", MAC_ARG_UINT8(sm->param));
+            wpas_set_mac_ctrl_port(sm->vif_idx, sm->param, 1);
             break;
         case WIFI_MGMT_EVENT_CLIENT_REMOVED:
             // add user callback here

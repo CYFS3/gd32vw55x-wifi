@@ -386,13 +386,13 @@ static int discover(struct dhcpd *packetinfo)
     memset(&payload_out, 0, sizeof(struct dhcpd));
     make_dhcpd_packet(&payload_out, packetinfo, DHCPOFFER);
     payload_out.yiaddr = lease->yiaddr.s_addr;
-    if (packetinfo->flags == 0) {
+    /* Always use broadcast for DHCPOFFER — client has no IP yet */
 #if LWIP_IPV6
-            destAddr.u_addr.ip4.addr = lease->yiaddr.s_addr;
+    destAddr.type = IPADDR_TYPE_V4;
+    destAddr.u_addr.ip4.addr = htonl(IPADDR_BROADCAST);
 #else
-            destAddr.addr = lease->yiaddr.s_addr;
+    ip_addr_set_ip4_u32(&destAddr, htonl(IPADDR_BROADCAST));
 #endif
-    }
 
     return 0;
 }
@@ -436,13 +436,13 @@ static int request(struct dhcpd *packetinfo)
         dhcpd_add_option(option, DHCP_DNS_SERVER, sizeof(server_config.server.s_addr), &server_config.server.s_addr);
         sys_memcpy(domain_name, DEFAULT_DOMAIN, sizeof(DEFAULT_DOMAIN));
         dhcpd_add_option(option, DHCP_DOMAIN_NAME, strlen(domain_name), domain_name);
-        if (packetinfo->flags == 0) {
+        /* Always use broadcast for DHCPACK — client may not have IP configured yet */
 #if LWIP_IPV6
-            destAddr.u_addr.ip4.addr = lease->yiaddr.s_addr;
+        destAddr.type = IPADDR_TYPE_V4;
+        destAddr.u_addr.ip4.addr = htonl(IPADDR_BROADCAST);
 #else
-            destAddr.addr = lease->yiaddr.s_addr;
+        ip_addr_set_ip4_u32(&destAddr, htonl(IPADDR_BROADCAST));
 #endif
-        }
 
         if ((lease->flag & DELETED) != 0) {
             lease->flag &= ~DELETED;
@@ -655,6 +655,13 @@ uint8_t dhcp_process(void *packet_addr)
     switch (type) {
     case DHCPDISCOVER:
         LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_TRACE, ("[DHCPD]: discover packet....\r\n"));
+        dbg_print(NOTICE, "DHCPD: DHCPDISCOVER from %02x:%02x:%02x:%02x:%02x:%02x\r\n",
+                  ((struct dhcpd *)packet_addr)->chaddr[0],
+                  ((struct dhcpd *)packet_addr)->chaddr[1],
+                  ((struct dhcpd *)packet_addr)->chaddr[2],
+                  ((struct dhcpd *)packet_addr)->chaddr[3],
+                  ((struct dhcpd *)packet_addr)->chaddr[4],
+                  ((struct dhcpd *)packet_addr)->chaddr[5]);
         discover(packet_addr);
         break;
 
@@ -689,6 +696,7 @@ uint8_t dhcp_process(void *packet_addr)
 static void UDP_Receive(void *arg, struct udp_pcb *upcb, struct pbuf *p, const ip_addr_t *addr, uint16_t port)
 {
     struct pbuf *q;
+    co_printf("DHCPD: UDP_Receive called, p=%p\r\n", p);
 
 #if LWIP_IPV6
     if (addr->type == IPADDR_TYPE_V6) {
@@ -711,6 +719,8 @@ static void UDP_Receive(void *arg, struct udp_pcb *upcb, struct pbuf *p, const i
                 q->payload = &payload_out;
                 udp_sendto(upcb, q, &destAddr, port);
                 pbuf_free(q);
+            } else {
+                dbg_print(ERR, "DHCPD: pbuf_alloc failed for response\r\n");
             }
         }
         pbuf_free(p);
@@ -731,8 +741,8 @@ void dhcpd_daemon(struct netif *net_if)
             }
         }
         UdpPcb = udp_new();
+        ip_set_option(UdpPcb, SOF_BROADCAST);
         udp_bind(UdpPcb, IP_ADDR_ANY, 67);
-        udp_bind_netif(UdpPcb, net_if);
         udp_recv(UdpPcb, UDP_Receive, NULL);
     }
 }

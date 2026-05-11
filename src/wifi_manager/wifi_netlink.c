@@ -820,7 +820,7 @@ int wifi_netlink_ap_start(int vif_idx, struct ap_cfg *cfg)
         } else {
             ap_cfg->mfp = 0;
         }
-        ap_cfg->he_disabled = 0;
+        ap_cfg->he_disabled = 1;
         ap_cfg->bcn_interval = 100;  // 113
         ap_cfg->dtim_period = 1;
     }
@@ -833,6 +833,7 @@ int wifi_netlink_ap_start(int vif_idx, struct ap_cfg *cfg)
     }
 
     /* 3. Set IP */
+    net_if_up(&wvif->net_if);
     sys_memset(&ip_cfg, 0, sizeof(ip_cfg));
     ip_cfg.mode = IP_ADDR_DHCP_SERVER;
 #ifdef CONFIG_IPV6_SUPPORT
@@ -842,7 +843,13 @@ int wifi_netlink_ap_start(int vif_idx, struct ap_cfg *cfg)
     ip_cfg.ipv4.addr = PP_HTONL(LWIP_MAKEU32(192, 168, 237, 1));
     ip_cfg.ipv4.mask = PP_HTONL(LWIP_MAKEU32(255, 255, 255, 0));
     ip_cfg.ipv4.gw = PP_HTONL(LWIP_MAKEU32(192, 168, 237, 1));
-    wifi_set_vif_ip(vif_idx, &ip_cfg);
+    res = wifi_set_vif_ip(vif_idx, &ip_cfg);
+    if (res) {
+        net_if_down(&wvif->net_if);
+        wifi_wpa_ap_sm_step(vif_idx, WIFI_MGMT_EVENT_STOP_AP_CMD, NULL, 0);
+        netlink_printf("%s: dhcp server start failed, res %d\r\n", __func__, res);
+        return -5;
+    }
 
     /* 4. Set mac vif state */
     macif_vif_ap_state_set(vif_idx, AP_OPEN);
@@ -883,6 +890,7 @@ int wifi_netlink_ap_stop(int vif_idx)
     ip_cfg.ip6_mode = IP6_ADDR_NONE;
 #endif
     wifi_set_vif_ip(vif_idx, &ip_cfg);
+    net_if_down(&wvif->net_if);
 
     /* 3. stop mac softap */
     macif_vif_ap_state_set(vif_idx, AP_CLOSE);
